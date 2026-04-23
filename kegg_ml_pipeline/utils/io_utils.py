@@ -6,6 +6,11 @@ from typing import Any
 
 
 def _to_jsonable(value: Any) -> Any:
+    """Recursively convert Python containers into JSON-serializable values.
+
+    The main special case is `set`, which JSON cannot encode natively.
+    We sort sets before writing so cache files are deterministic across runs.
+    """
     if isinstance(value, dict):
         return {key: _to_jsonable(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -16,6 +21,11 @@ def _to_jsonable(value: Any) -> Any:
 
 
 def save_json(path: str, data: dict) -> None:
+    """Write a dictionary to disk as formatted JSON.
+
+    This helper is used by multiple pipeline steps, so it also ensures the
+    parent directory exists before writing the file.
+    """
     dir_name = os.path.dirname(path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
@@ -27,15 +37,23 @@ def save_json(path: str, data: dict) -> None:
 
 
 def load_json(path: str) -> dict:
+    """Load a JSON file and return the raw decoded dictionary."""
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def pathways_to_sets(pathways: dict) -> dict:
+    """Restore each pathway's gene list back into a set in place.
+
+    Pathway caches are written as JSON, so gene sets become lists on disk.
+    Downstream code expects fast membership tests and de-duplication, so we
+    convert the `genes` field back to `set` after loading.
+    """
     for pathway in pathways.values():
         pathway["genes"] = set(pathway.get("genes", []))
     return pathways
 
 
 def gene_go_to_sets(gene_go: dict) -> dict:
+    """Return a new gene -> GO mapping with GO lists converted to sets."""
     return {gene: set(go_terms) for gene, go_terms in gene_go.items()}
