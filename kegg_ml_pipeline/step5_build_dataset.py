@@ -113,6 +113,8 @@ def split_and_save(
     all_go_terms: list[str],
     test_size: float = config.TEST_SIZE,
     random_state: int = config.RANDOM_STATE,
+    train_path: str = config.TRAIN_DATA,
+    test_path: str = config.TEST_DATA,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Stratified train/test split and save to disk as NumPy archives.
 
@@ -127,6 +129,8 @@ def split_and_save(
         all_go_terms: Sorted list of GO term identifiers used to build ``X``.
         test_size: Fraction of samples reserved for the test set.
         random_state: Seed passed to ``train_test_split``.
+        train_path: Destination path for the training archive.
+        test_path: Destination path for the test archive.
 
     Returns:
         Tuple ``(X_train, y_train, X_test, y_test)``.
@@ -149,17 +153,17 @@ def split_and_save(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
 
-    os.makedirs(os.path.dirname(config.TRAIN_DATA), exist_ok=True)
-    os.makedirs(os.path.dirname(config.TEST_DATA), exist_ok=True)
+    os.makedirs(os.path.dirname(train_path), exist_ok=True)
+    os.makedirs(os.path.dirname(test_path), exist_ok=True)
 
     np.savez(
-        config.TRAIN_DATA,
+        train_path,
         X=X_train,
         y=y_train,
         all_go_terms=np.array(all_go_terms),
     )
     np.savez(
-        config.TEST_DATA,
+        test_path,
         X=X_test,
         y=y_test,
         all_go_terms=np.array(all_go_terms),
@@ -173,8 +177,8 @@ def split_and_save(
         f"Test : {len(X_test)}  "
         f"(pos={int(y_test.sum())}  neg={int((y_test == 0).sum())})"
     )
-    print(f"Saved -> {config.TRAIN_DATA}")
-    print(f"Saved -> {config.TEST_DATA}")
+    print(f"Saved -> {train_path}")
+    print(f"Saved -> {test_path}")
     return X_train, y_train, X_test, y_test
 
 
@@ -190,4 +194,9 @@ if __name__ == "__main__":
         all_pathways = load_pathways_tsv(config.ALL_PATHWAYS)
 
     X, y = build_dataset(all_pathways, gene_go, all_go_terms)
-    split_and_save(X, y, all_go_terms)
+    if mock:
+        split_and_save(X, y, all_go_terms,
+                       train_path=config.MOCK_TRAIN_DATA,
+                       test_path=config.MOCK_TEST_DATA)
+    else:
+        split_and_save(X, y, all_go_terms)

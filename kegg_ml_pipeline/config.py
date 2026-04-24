@@ -29,6 +29,10 @@ FEATURE_MATRIX = "data/feature_matrix.npz"
 LABELS = "data/labels.npy"
 TRAIN_DATA = "data/train.npz"
 TEST_DATA  = "data/test.npz"
+MOCK_TRAIN_DATA = "data/mock_train.npz"
+MOCK_TEST_DATA  = "data/mock_test.npz"
+MOCK_MODEL_PATH = "results/mock/pathway_model.json"
+MOCK_RESULTS_DIR = "results/mock/"
 
 # Trained model output and SHAP analysis directory.
 MODEL_PATH = "results/pathway_model.json"
