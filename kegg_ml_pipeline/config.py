@@ -27,6 +27,8 @@ GO_CACHE = "data/gene_go.tsv"
 # Feature matrix and labels saved after dataset construction.
 FEATURE_MATRIX = "data/feature_matrix.npz"
 LABELS = "data/labels.npy"
+TRAIN_DATA = "data/train.npz"
+TEST_DATA  = "data/test.npz"
 
 # Trained model output and SHAP analysis directory.
 MODEL_PATH = "results/pathway_model.json"
