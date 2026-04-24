@@ -33,6 +33,8 @@ MOCK_TRAIN_DATA = "data/mock_train.npz"
 MOCK_TEST_DATA  = "data/mock_test.npz"
 MOCK_MODEL_PATH = "results/mock/pathway_model.json"
 MOCK_RESULTS_DIR = "results/mock/"
+CANDIDATE_SCORES      = "results/candidate_scores.csv"
+MOCK_CANDIDATE_SCORES = "results/mock/candidate_scores.csv"
 
 # Trained model output and SHAP analysis directory.
 MODEL_PATH = "results/pathway_model.json"
