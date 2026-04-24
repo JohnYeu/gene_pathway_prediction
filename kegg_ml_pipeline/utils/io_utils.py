@@ -119,3 +119,46 @@ def load_pathways_tsv(path: str) -> dict[str, dict]:
             }
 
     return pathways
+
+
+def save_gene_go_tsv(path: str, gene_go: dict[str, set[str]]) -> None:
+    """Write the gene -> GO mapping to a TSV file.
+
+    Each row represents one gene. The `go_terms` column holds a sorted,
+    comma-separated list of GO identifiers so the file is human-readable
+    and diffs cleanly in version control.
+
+    Format: gene | go_count | go_terms
+    """
+    dir_name = os.path.dirname(path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t")
+        writer.writerow(["gene", "go_count", "go_terms"])
+
+        for gene in sorted(gene_go):
+            sorted_terms = sorted(gene_go[gene])
+            writer.writerow([gene, len(sorted_terms), ",".join(sorted_terms)])
+
+    print(f"Saved → {path}")
+
+
+def load_gene_go_tsv(path: str) -> dict[str, set[str]]:
+    """Load a gene -> GO mapping from a TSV created by `save_gene_go_tsv`.
+
+    Returns `{gene_id: set[go_term]}` with the same structure as the
+    in-memory representation used throughout the pipeline.
+    """
+    gene_go: dict[str, set[str]] = {}
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            gene = (row.get("gene") or "").strip()
+            if not gene:
+                continue
+            go_field = (row.get("go_terms") or "").strip()
+            gene_go[gene] = {term for term in go_field.split(",") if term}
+
+    return gene_go
