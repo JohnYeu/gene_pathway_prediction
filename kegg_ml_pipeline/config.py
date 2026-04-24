@@ -3,22 +3,26 @@
 # real-data runs and future mock/test runs without rewriting scripts.
 
 # Parsed KEGG pathway cache generated from the KEGG raw files / API.
-KEGG_CACHE = "data/kegg_pathways.json"
+# Stored as TSV so each pathway remains easy to inspect and diff.
+KEGG_CACHE = "data/kegg_pathways.tsv"
 
 # Parsed AraCyc cache written by the AraCyc preprocessing step.
-ARACYC_CACHE = "data/aracyc_pathways.json"
+# Stored in the same TSV layout as the KEGG cache and merged table.
+ARACYC_CACHE = "data/aracyc_pathways.tsv"
 
 # Actual raw AraCyc input available in this repository.
 ARACYC_RAW = "data/aracyc_pathways.20251021"
 
-# Merged pathway universe combining KEGG and AraCyc.
-ALL_PATHWAYS = "data/all_pathways.json"
+# Final merged pathway table combining KEGG and AraCyc.
+# Stored as TSV so the output is easy to inspect in spreadsheets or shell tools.
+ALL_PATHWAYS = "data/all_pathways.tsv"
 
 # TAIR GO annotation source file used to build gene -> GO mappings.
 GO_ANNOTATION = "data/ATH_GO_GOSLIM.txt"
 
 # Serialized gene -> GO mapping cache.
-GO_CACHE = "data/gene_go.json"
+# Reserved for a future TSV export in the GO-processing step.
+GO_CACHE = "data/gene_go.tsv"
 
 # Feature matrix and labels saved after dataset construction.
 FEATURE_MATRIX = "data/feature_matrix.npz"

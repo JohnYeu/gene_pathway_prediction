@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 from typing import Any
@@ -57,3 +58,64 @@ def pathways_to_sets(pathways: dict) -> dict:
 def gene_go_to_sets(gene_go: dict) -> dict:
     """Return a new gene -> GO mapping with GO lists converted to sets."""
     return {gene: set(go_terms) for gene, go_terms in gene_go.items()}
+
+
+def save_pathways_tsv(path: str, pathways: dict) -> None:
+    """Write pathway dictionaries to a human-readable TSV table.
+
+    The TSV uses separate `kegg` and `aracyc` ID columns so the source-specific
+    identifier is always explicit in the file itself. This keeps the KEGG cache,
+    AraCyc cache, and merged pathway table in one consistent format.
+    """
+    dir_name = os.path.dirname(path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t")
+        writer.writerow(["kegg", "aracyc", "name", "source", "gene_count", "genes"])
+
+        for pathway_id, pathway in sorted(pathways.items()):
+            is_kegg = pathway.get("source") == "KEGG"
+            genes = sorted(pathway.get("genes", []))
+            writer.writerow(
+                [
+                    pathway_id if is_kegg else "",
+                    "" if is_kegg else pathway_id,
+                    pathway.get("name", ""),
+                    pathway.get("source", ""),
+                    len(genes),
+                    ",".join(genes),
+                ]
+            )
+
+    print(f"Saved → {path}")
+
+
+def load_pathways_tsv(path: str) -> dict[str, dict]:
+    """Load a pathway TSV created by `save_pathways_tsv`.
+
+    Returned format matches the in-memory pathway structure used throughout the
+    pipeline: `{pathway_id: {name, genes: set[str], source}}`.
+    """
+    pathways: dict[str, dict] = {}
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            pathway_id = (row.get("kegg") or row.get("aracyc") or "").strip()
+            if not pathway_id:
+                continue
+
+            source = (row.get("source") or "").strip()
+            if not source:
+                source = "KEGG" if row.get("kegg") else "AraCyc"
+
+            genes_field = (row.get("genes") or "").strip()
+            genes = {gene for gene in genes_field.split(",") if gene}
+            pathways[pathway_id] = {
+                "name": (row.get("name") or "").strip(),
+                "genes": genes,
+                "source": source,
+            }
+
+    return pathways

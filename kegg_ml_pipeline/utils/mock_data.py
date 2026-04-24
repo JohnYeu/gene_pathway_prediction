@@ -145,8 +145,8 @@ def generate_mock_universe(seed: int = 42) -> dict:
             rng=rng,
         )
 
-    # The returned object is intentionally plain and serializable after
-    # converting sets via utils.io_utils.save_json.
+    # The returned object is intentionally plain and easy to serialize through
+    # the TSV/JSON helper functions in utils.io_utils.
     return {
         "genes": genes,
         "go_terms": go_terms,
