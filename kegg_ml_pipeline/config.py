@@ -2,46 +2,74 @@
 # Keeping these values in one module makes it easier to switch between
 # real-data runs and future mock/test runs without rewriting scripts.
 
+# All generated intermediate products carry a `stepN_` prefix so the file
+# itself records which pipeline step produced it (paper-supplementary friendly).
+# Inputs (ARACYC_RAW, GO_ANNOTATION) keep their original names.
+
+# ── Step 2: KEGG + AraCyc pathway parsing & merging ─────────────────────────
 # Parsed KEGG pathway cache generated from the KEGG raw files / API.
-# Stored as TSV so each pathway remains easy to inspect and diff.
-KEGG_CACHE = "data/kegg_pathways.tsv"
+KEGG_CACHE = "data/step2_kegg_pathways.tsv"
 
 # Parsed AraCyc cache written by the AraCyc preprocessing step.
-# Stored in the same TSV layout as the KEGG cache and merged table.
-ARACYC_CACHE = "data/aracyc_pathways.tsv"
+ARACYC_CACHE = "data/step2_aracyc_pathways.tsv"
 
-# Actual raw AraCyc input available in this repository.
+# Actual raw AraCyc input available in this repository (INPUT — not renamed).
 ARACYC_RAW = "data/aracyc_pathways.20251021"
 
 # Final merged pathway table combining KEGG and AraCyc.
-# Stored as TSV so the output is easy to inspect in spreadsheets or shell tools.
-ALL_PATHWAYS = "data/all_pathways.tsv"
+ALL_PATHWAYS = "data/step2_all_pathways.tsv"
 
-# TAIR GO annotation source file used to build gene -> GO mappings.
+# ── Step 3: GO annotation parsing ───────────────────────────────────────────
+# TAIR GO annotation source file (INPUT — not renamed).
 GO_ANNOTATION = "data/ATH_GO_GOSLIM.txt"
 
-# Serialized gene -> GO mapping cache.
-# Reserved for a future TSV export in the GO-processing step.
-GO_CACHE = "data/gene_go.tsv"
+# Serialized gene -> GO mapping cache (TSV export from step 3).
+GO_CACHE = "data/step3_gene_go.tsv"
 
-# Feature matrix and labels saved after dataset construction.
-FEATURE_MATRIX = "data/feature_matrix.npz"
-LABELS = "data/labels.npy"
-TRAIN_DATA = "data/train.npz"
-TEST_DATA  = "data/test.npz"
-MOCK_TRAIN_DATA = "data/mock_train.npz"
-MOCK_TEST_DATA  = "data/mock_test.npz"
-MOCK_MODEL_PATH = "results/mock/pathway_model.json"
+# ── Step 4: feature extraction ──────────────────────────────────────────────
+FEATURE_MATRIX      = "data/step4_feature_matrix.npz"
+MOCK_FEATURE_MATRIX = "data/mock_step4_feature_matrix.npz"
+
+# ── Step 5: dataset construction (train/test split) ─────────────────────────
+LABELS          = "data/step5_labels.npy"
+TRAIN_DATA      = "data/step5_train.npz"
+TEST_DATA       = "data/step5_test.npz"
+MOCK_TRAIN_DATA = "data/mock_step5_train.npz"
+MOCK_TEST_DATA  = "data/mock_step5_test.npz"
+
+# ── Step 6: XGBoost training ────────────────────────────────────────────────
+MODEL_PATH      = "results/step6_pathway_model.json"
+MOCK_MODEL_PATH = "results/mock/step6_pathway_model.json"
+
+# ── Step 8: candidate scoring ───────────────────────────────────────────────
+CANDIDATE_SCORES      = "results/step8_candidate_scores.csv"
+MOCK_CANDIDATE_SCORES = "results/mock/step8_candidate_scores.csv"
+
+# ── Step 9: filter, validate & final report + supplementary tables ──────────
+FINAL_REPORT      = "results/step9_final_candidate_pathways.csv"
+MOCK_FINAL_REPORT = "results/mock/step9_final_candidate_pathways.csv"
+
+# Long-format batch SHAP summary written by step 9 (one row per candidate × top
+# feature, top-5 features per candidate by |SHAP|).
+SHAP_BATCH_SUMMARY      = "results/shap/step9_batch_summary.csv"
+MOCK_SHAP_BATCH_SUMMARY = "results/mock/shap/step9_batch_summary.csv"
+
+# Per-candidate full GO enrichment results (long format, all enriched terms,
+# not just the top-3 written into the final report).
+GO_ENRICHMENT_PER_CANDIDATE      = "results/step9_go_enrichment_per_candidate.csv"
+MOCK_GO_ENRICHMENT_PER_CANDIDATE = "results/mock/step9_go_enrichment_per_candidate.csv"
+
+# Single-row aggregated metrics CSV written at end of full pipeline runs.
+METRICS_SUMMARY      = "results/step9_metrics_summary.csv"
+MOCK_METRICS_SUMMARY = "results/mock/step9_metrics_summary.csv"
+
+# Number of top-scoring candidates to generate local SHAP waterfall plots for.
+SHAP_LOCAL_TOP_K = 10
+
+# ── Output directories (no rename — directory containers, not files) ────────
+RESULTS_DIR      = "results/"
 MOCK_RESULTS_DIR = "results/mock/"
-CANDIDATE_SCORES      = "results/candidate_scores.csv"
-MOCK_CANDIDATE_SCORES = "results/mock/candidate_scores.csv"
-FINAL_REPORT          = "results/final_candidate_pathways.csv"
-MOCK_FINAL_REPORT     = "results/mock/final_candidate_pathways.csv"
-
-# Trained model output and SHAP analysis directory.
-MODEL_PATH = "results/pathway_model.json"
-SHAP_DIR = "results/shap/"
-RESULTS_DIR = "results/"
+SHAP_DIR         = "results/shap/"
 
 # Negative-to-positive sampling ratio for binary pathway classification.
 NEG_POS_RATIO = 2

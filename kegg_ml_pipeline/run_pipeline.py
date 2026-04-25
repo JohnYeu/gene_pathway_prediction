@@ -22,22 +22,24 @@ Usage examples::
 
 Note on mock partial runs
 --------------------------
-``--mock --step 2`` and ``--mock --step 4`` are intentional smoke checks:
+``--mock --step 2`` is the only mock smoke-check: it generates pathways in
+memory (``save=False``) and never writes ``data/step2_all_pathways.tsv``, so
+``--mock --from-step 3`` would fail to find that artefact on disk — except
+that ``_load_state()`` always reconstructs ``all_pathways`` and ``gene_go``
+from ``generate_mock_universe()`` in mock mode, so partial mock runs from
+step 3 onwards work correctly without any TSV on disk.
 
-  * Step 2 in mock mode generates pathways in memory only (``save=False``),
-    so no TSV is written to ``data/all_pathways.tsv``.
-  * Step 4 in mock mode validates feature dimensions on 5 sample rows only;
-    it does not write ``data/feature_matrix.npz``.
-
-``--mock --from-step 3`` (and any later mock partial run) works correctly:
-``_load_state()`` always reconstructs ``all_pathways`` and ``gene_go`` from
-``generate_mock_universe()`` in mock mode, so no pathway TSV on disk is needed.
+All other mock steps write their normal artefacts under ``data/mock_stepN_*``
+or ``results/mock/``.  In particular ``--mock --step 4`` now writes the full
+``data/mock_step4_feature_matrix.npz`` (it is no longer a smoke-check).
 """
 
 from __future__ import annotations
 
 import argparse
+import glob
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -122,6 +124,18 @@ def _now() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def _safe_filename(s: str) -> str:
+    """Sanitise an arbitrary string for use as a filename component.
+
+    Keeps only ``[A-Za-z0-9_.-]``; every other character (``:``, ``/``, ``+``,
+    whitespace, etc.) is replaced with ``_``.  Pathway IDs such as
+    ``aracyc:mock_0`` or KEGG pathway URLs would otherwise break filesystem
+    paths or be platform-dependent (Windows reserved characters), so we
+    normalise here for cross-platform supplementary outputs.
+    """
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", s)
+
+
 # Human-readable recovery hints printed when a step fails.
 _FIX_HINTS: dict[int, str] = {
     1: "Run: pip install -r requirements.txt  (Python >= 3.10 required)",
@@ -197,7 +211,7 @@ def _load_state(start_step: int, mock: bool) -> dict[str, Any]:
 
         Mock note: ``all_pathways`` and ``gene_go`` are always reconstructed from
         ``generate_mock_universe()`` because the mock pipeline does not write
-        ``data/all_pathways.tsv`` to disk (step 2 uses ``save=False``).
+        ``data/step2_all_pathways.tsv`` to disk (step 2 uses ``save=False``).
 
     Post-training (steps 6-9)
         ``X_train``, ``y_train``, ``X_test``, ``y_test``, and ``all_go_terms``
@@ -323,7 +337,7 @@ def _step2(state: dict, mock: bool) -> None:
     def _run() -> dict:
         kegg   = step2a_kegg.get_ath_pathways(mock=mock)
         aracyc = step2b_aracyc.parse_aracyc_pathways(config.ARACYC_RAW, mock=mock)
-        # save=False in mock mode: avoids overwriting data/all_pathways.tsv
+        # save=False in mock mode: avoids overwriting data/step2_all_pathways.tsv
         # with synthetic data, keeping the real-data artefact intact.
         return step2b_aracyc.merge_and_save_all_pathways(kegg, aracyc, save=not mock)
 
@@ -331,11 +345,12 @@ def _step2(state: dict, mock: bool) -> None:
 
     if mock:
         # Warn: the pathway dict lives only in memory for the rest of this run.
-        # A subsequent --mock --from-step 3 will fail because no TSV was written.
+        # _load_state() always rebuilds mock pathways from generate_mock_universe(),
+        # so --mock --from-step 3 still works without any TSV on disk; this print
+        # just makes the in-memory-only behaviour explicit for the user.
         print(
             "[Step 2] Mock smoke check: pathways are in memory only "
-            "(data/all_pathways.tsv was NOT written). "
-            "Use --mock --from-step 2 to re-run the whole mock sequence."
+            "(data/step2_all_pathways.tsv was NOT written)."
         )
 
 
@@ -354,40 +369,41 @@ def _step3(state: dict, mock: bool) -> None:
 
 
 def _step4(state: dict, mock: bool) -> None:
-    """Smoke-check feature extraction on the first 5 pathways.
+    """Build the full feature matrix and save it as a NumPy archive.
 
-    In run_pipeline this step only validates the feature dimension; it does NOT
-    write data/feature_matrix.npz.  Run ``python step4_feature_extraction.py``
-    directly to produce that file.
+    The on-disk archive is intentionally redundant with the train/test NPZ
+    files written by step 5 — it preserves the *unsplit* per-pathway feature
+    matrix and aligned ``pathway_ids``, which is the natural input table for
+    paper supplementary analyses (e.g. UMAP, clustering, manual inspection).
     """
     all_pathways = state["all_pathways"]
     gene_go      = state["gene_go"]
     all_go_terms = state["all_go_terms"]
+    feature_path = config.MOCK_FEATURE_MATRIX if mock else config.FEATURE_MATRIX
 
     def _run() -> None:
-        gene_lists = [
-            sorted(p["genes"])
-            for p in all_pathways.values()
+        valid = {
+            pid: p
+            for pid, p in all_pathways.items()
             if len(p.get("genes", set())) >= 3
-        ][:5]
-        X_sample = step4_feature_extraction.build_feature_matrix(
-            gene_lists, gene_go, all_go_terms
+        }
+        pathway_ids = list(valid.keys())
+        gene_lists  = [list(p["genes"]) for p in valid.values()]
+        X = step4_feature_extraction.build_feature_matrix(
+            gene_lists, gene_go, all_go_terms,
         )
+
         expected_d = len(all_go_terms) + 6
-        if X_sample.shape[1] != expected_d:
+        if X.shape[1] != expected_d:
             raise ValueError(
-                f"Feature dimension mismatch: got {X_sample.shape[1]}, "
+                f"Feature dimension mismatch: got {X.shape[1]}, "
                 f"expected {expected_d} (len(all_go_terms) + 6)"
             )
-        print(f"Feature check OK: sample shape={X_sample.shape}")
-        if mock:
-            # Warn: no npz was written; same note as step 2.
-            print(
-                "[Step 4] Mock smoke check: data/feature_matrix.npz was NOT written. "
-                "Run python step4_feature_extraction.py to produce that file."
-            )
+        step4_feature_extraction.save_feature_matrix(
+            X, all_go_terms, pathway_ids, path=feature_path,
+        )
 
-    _run_step(4, "Feature extraction smoke check", _run)
+    _run_step(4, "Build feature matrix", _run)
 
 
 def _step5(state: dict, mock: bool) -> None:
@@ -428,7 +444,14 @@ def _step6(state: dict, mock: bool) -> None:
         model = step6_train_xgboost.train_final_model(
             X_train, y_train, config.XGB_PARAMS, model_path=model_path,
         )
-        step6_train_xgboost.evaluate_model(model, X_test, y_test, results_dir=results_dir)
+        test_metrics = step6_train_xgboost.evaluate_model(
+            model, X_test, y_test, results_dir=results_dir,
+        )
+        # Persist metrics for the end-of-pipeline metrics_summary.csv writer.
+        # state captures from the *fresh* run only — partial runs that skip
+        # step 6 will not have these keys, which is the intended gating.
+        state["cv_scores"]    = cv_scores
+        state["test_metrics"] = test_metrics
         return model
 
     state["model"] = _run_step(6, "Train XGBoost model", _run)
@@ -545,12 +568,43 @@ def _step8(state: dict, mock: bool, deg: str | None) -> None:
 
 
 def _step9(state: dict, mock: bool) -> pd.DataFrame:
-    """Jaccard deduplication, GO enrichment, per-candidate SHAP, final report."""
+    """Jaccard deduplication, GO enrichment, per-candidate SHAP, final report.
+
+    Beyond ``step9_final_candidate_pathways.csv``, this step also produces three
+    paper-supplementary artefacts (all named with a ``step9_`` prefix so the
+    file records its producing step):
+      * ``results/shap/step9_local_candidate_<pid>.png`` — top-K waterfall plots
+      * ``results/shap/step9_batch_summary.csv``         — per-candidate top-5 SHAP
+      * ``results/step9_go_enrichment_per_candidate.csv``— full GO enrichment table
+
+    The two CSV outputs are always written with a stable header even when
+    there are no candidates, so downstream scripts can rely on the schema
+    without ``os.path.exists()`` checks.
+    """
     model        = state["model"]
     gene_go      = state["gene_go"]
     all_go_terms = state["all_go_terms"]
     all_pathways = state["all_pathways"]
     output_path  = config.MOCK_FINAL_REPORT if mock else config.FINAL_REPORT
+    shap_dir = (
+        os.path.join(config.MOCK_RESULTS_DIR, "shap") if mock else config.SHAP_DIR
+    )
+    shap_csv_path = (
+        config.MOCK_SHAP_BATCH_SUMMARY if mock else config.SHAP_BATCH_SUMMARY
+    )
+    go_full_path = (
+        config.MOCK_GO_ENRICHMENT_PER_CANDIDATE
+        if mock
+        else config.GO_ENRICHMENT_PER_CANDIDATE
+    )
+
+    # Stable column schemas for the two supplementary CSVs — used in both the
+    # populated and empty branches so the file always has the same header.
+    BATCH_SUMMARY_COLS = ["candidate_id", "rank", "feature_name", "shap_value"]
+    GO_FULL_COLS = [
+        "pathway_id", "rank", "go_term",
+        "overlap_count", "expected", "p_value", "p_adjusted",
+    ]
 
     # state["df8"] contains the full step-8 output (all scored candidates).
     # Filter to is_candidate=True here — this normalises both the in-memory
@@ -571,9 +625,30 @@ def _step9(state: dict, mock: bool) -> pd.DataFrame:
     source_tag = "mock" if mock else "real"
     print(f"[{source_tag}] {len(candidates_filtered)} candidates (is_candidate=True)")
 
+    def _write_empty_supplementary() -> None:
+        """Write header-only batch_summary.csv and go_enrichment_per_candidate.csv,
+        and clean up stale local_candidate_*.png from prior runs.
+        """
+        os.makedirs(os.path.dirname(shap_csv_path) or ".", exist_ok=True)
+        pd.DataFrame(columns=BATCH_SUMMARY_COLS).to_csv(shap_csv_path, index=False)
+        print(f"Saved → {shap_csv_path}  (0 rows)")
+
+        os.makedirs(os.path.dirname(go_full_path) or ".", exist_ok=True)
+        pd.DataFrame(columns=GO_FULL_COLS).to_csv(go_full_path, index=False)
+        print(f"Saved → {go_full_path}  (0 rows)")
+
+        # Clean stale waterfall images so an `ls step9_local_candidate_*.png`
+        # count reflects the current run, not residue from a prior run.
+        if os.path.isdir(shap_dir):
+            for stale in glob.glob(
+                os.path.join(shap_dir, "step9_local_candidate_*.png")
+            ):
+                os.remove(stale)
+
     def _run() -> pd.DataFrame:
         if candidates_filtered.empty:
-            print("[WARNING] No candidates found. Writing empty report.")
+            print("[WARNING] No candidates found. Writing empty report + empty supplementary CSVs.")
+            _write_empty_supplementary()
             return step9_filter_validate.generate_final_report(
                 candidates_filtered, pd.DataFrame(), {}, output_path=output_path,
             )
@@ -587,6 +662,9 @@ def _step9(state: dict, mock: bool) -> pd.DataFrame:
         # GO enrichment — build the reverse index once and reuse it across all
         # candidates to keep the per-candidate cost at O(|candidate_genes|).
         go_index = step9_filter_validate._build_go_index(gene_go, all_go_terms)
+
+        # First pass: top-10 (default truncation) — feeds the final report's
+        # top_enriched_go column.
         go_enrichment_results: dict[str, pd.DataFrame] = {}
         for _, row in cf.iterrows():
             pid   = row["pathway_id"]
@@ -599,8 +677,30 @@ def _step9(state: dict, mock: bool) -> pd.DataFrame:
                 genes, gene_go, all_go_terms, go_index=go_index,
             )
 
-        # Per-candidate SHAP (batch, long-format)
-        from step7_shap_analysis import batch_local_shap, _build_feature_names
+        # Second pass: full enrichment (top_n=len(all_go_terms) disables the
+        # internal .head(top_n) truncation) — feeds the supplementary CSV.
+        # We keep the two passes decoupled so the final report stays compact
+        # while the supplementary CSV is exhaustive.
+        go_full_results: dict[str, pd.DataFrame] = {}
+        for _, row in cf.iterrows():
+            pid   = row["pathway_id"]
+            genes = [
+                g.strip()
+                for g in str(row["scored_genes"]).split(",")
+                if g.strip()
+            ]
+            go_full_results[pid] = step9_filter_validate.go_enrichment_validation(
+                genes, gene_go, all_go_terms,
+                go_index=go_index,
+                top_n=len(all_go_terms),
+            )
+
+        # Per-candidate SHAP (batch, long-format) and top-K waterfall plots
+        from step7_shap_analysis import (
+            _build_feature_names,
+            batch_local_shap,
+            local_shap_analysis,
+        )
 
         expected_d = len(_build_feature_names(all_go_terms))
         if model.get_booster().num_features() != expected_d:
@@ -622,11 +722,123 @@ def _step9(state: dict, mock: bool) -> pd.DataFrame:
             top_k=5,
         )
 
+        # Clean stale step9_local_candidate_*.png from prior runs, then write
+        # the current top-K waterfalls.  Only delete this exact prefix so
+        # step7_local_*.png and step7_global_summary.png survive.
+        os.makedirs(shap_dir, exist_ok=True)
+        for stale in glob.glob(
+            os.path.join(shap_dir, "step9_local_candidate_*.png")
+        ):
+            os.remove(stale)
+
+        top_k = min(config.SHAP_LOCAL_TOP_K, len(cf))
+        top_cf = cf.nlargest(top_k, "score").reset_index(drop=True)
+        # X_cands rows align with cf order (pre-sort), so map pid -> index in cf.
+        cf_index_by_pid = {
+            row["pathway_id"]: i
+            for i, row in cf.reset_index(drop=True).iterrows()
+        }
+        for _, row in top_cf.iterrows():
+            pid = row["pathway_id"]
+            idx = cf_index_by_pid[pid]
+            local_shap_analysis(
+                model, X_cands[idx],
+                sample_id=f"candidate_{_safe_filename(pid)}",
+                all_go_terms=all_go_terms,
+                pathway_name=row.get("pathway_name", ""),
+                shap_dir=shap_dir,
+                # Embed step-9 in the output filename so the file records its
+                # producing step (paper-supplementary friendly).
+                file_prefix="step9",
+            )
+
+        # Save batch SHAP summary CSV — always with the stable header schema.
+        os.makedirs(os.path.dirname(shap_csv_path) or ".", exist_ok=True)
+        if shap_summary.empty:
+            pd.DataFrame(columns=BATCH_SUMMARY_COLS).to_csv(shap_csv_path, index=False)
+        else:
+            shap_summary.to_csv(shap_csv_path, index=False)
+        print(f"Saved → {shap_csv_path}  ({len(shap_summary)} rows)")
+
+        # Save full per-candidate GO enrichment CSV — long format, header stable.
+        go_long_records: list[dict] = []
+        for pid, edf in go_full_results.items():
+            if edf.empty:
+                continue
+            for rank, (_, erow) in enumerate(edf.iterrows(), 1):
+                go_long_records.append({
+                    "pathway_id":    pid,
+                    "rank":          rank,
+                    "go_term":       erow["go_term"],
+                    "overlap_count": int(erow["overlap_count"]),
+                    "expected":      float(erow["expected"]),
+                    "p_value":       float(erow["p_value"]),
+                    "p_adjusted":    float(erow["p_adjusted"]),
+                })
+        go_long_df = (
+            pd.DataFrame(go_long_records, columns=GO_FULL_COLS)
+            if go_long_records
+            else pd.DataFrame(columns=GO_FULL_COLS)
+        )
+        os.makedirs(os.path.dirname(go_full_path) or ".", exist_ok=True)
+        go_long_df.to_csv(go_full_path, index=False)
+        print(f"Saved → {go_full_path}  ({len(go_long_df)} rows)")
+
         return step9_filter_validate.generate_final_report(
             cf, shap_summary, go_enrichment_results, output_path=output_path,
         )
 
-    return _run_step(9, "Filter, validate & final report", _run)
+    report_df = _run_step(9, "Filter, validate & final report", _run)
+    # Always persist the report so end-of-pipeline metrics_summary.csv has a
+    # consistent input — even when candidates_filtered is empty (in which case
+    # report_df is also empty but still has the standard column schema).
+    state["report_df"] = report_df
+    return report_df
+
+
+def _write_metrics_summary(state: dict, mock: bool, steps: list[int]) -> None:
+    """Write a single-row CSV aggregating CV/test metrics and candidate counts.
+
+    Strict gating: only write when *this* invocation actually executed both
+    step 6 (which produces ``cv_scores`` and ``test_metrics``) and step 9
+    (which produces ``report_df``).  Any partial run that does not include
+    both leaves the previous metrics_summary.csv untouched, so a stale write
+    cannot pollute paper-ready supplementary files.
+    """
+    steps_set = set(steps)
+    fresh_run = {6, 9} <= steps_set
+    has_state = all(
+        k in state for k in ("cv_scores", "test_metrics", "report_df")
+    )
+    if not (fresh_run and has_state):
+        return
+
+    cv  = state["cv_scores"]
+    tm  = state["test_metrics"]
+    rdf = state["report_df"]
+    summary = {
+        "mode":                 "mock" if mock else "real",
+        "timestamp":            datetime.now().isoformat(timespec="seconds"),
+        "cv_auroc_mean":        float(np.mean(cv)),
+        "cv_auroc_std":         float(np.std(cv)),
+        "test_auroc":           float(tm["auroc"]),
+        "test_auprc":           float(tm["auprc"]),
+        "test_accuracy":        float(tm["accuracy"]),
+        "test_f1":              float(tm["f1"]),
+        "n_candidates_total":   int(len(rdf)),
+        "n_high_overlap": (
+            int((rdf["overlap_class"] == "high_overlap").sum())
+            if "overlap_class" in rdf.columns else 0
+        ),
+        "n_low_overlap": (
+            int((rdf["overlap_class"] == "low_overlap").sum())
+            if "overlap_class" in rdf.columns else 0
+        ),
+    }
+    path = config.MOCK_METRICS_SUMMARY if mock else config.METRICS_SUMMARY
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    pd.DataFrame([summary]).to_csv(path, index=False)
+    print(f"Saved → {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -687,6 +899,11 @@ def main() -> None:
             _step8(state, mock, args.deg)
         elif n == 9:
             _step9(state, mock)
+
+    # Aggregate metrics into a single-row summary CSV — only written when this
+    # run actually executed both step 6 and step 9 (see _write_metrics_summary
+    # for the gating rules).  Partial runs leave any existing file untouched.
+    _write_metrics_summary(state, mock, steps)
 
     # Print a short summary after all steps complete.
     final_path = config.MOCK_FINAL_REPORT if mock else config.FINAL_REPORT

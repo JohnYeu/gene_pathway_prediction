@@ -26,7 +26,7 @@ def train_with_cv(
     """Run stratified k-fold cross-validation and return per-fold AUROC scores.
 
     Each fold trains a fresh XGBClassifier so no state leaks between folds.
-    After all folds, saves a bar chart to ``results_dir/cv_scores.png`` showing
+    After all folds, saves a bar chart to ``results_dir/step6_cv_scores.png`` showing
     per-fold AUROC, the mean, and the acceptance threshold.
 
     Args:
@@ -34,7 +34,7 @@ def train_with_cv(
         y_train: Binary label vector of length ``n``.
         params: XGBoost hyper-parameter dict (e.g. config.XGB_PARAMS).
         n_splits: Number of cross-validation folds.
-        results_dir: Directory where ``cv_scores.png`` will be written.
+        results_dir: Directory where ``step6_cv_scores.png`` will be written.
 
     Returns:
         List of AUROC floats, one per fold.
@@ -75,7 +75,7 @@ def train_with_cv(
     ax.set_title("Cross-validation AUROC")
     ax.legend()
     plt.tight_layout()
-    cv_plot_path = os.path.join(results_dir, "cv_scores.png")
+    cv_plot_path = os.path.join(results_dir, "step6_cv_scores.png")
     plt.savefig(cv_plot_path)
     plt.close()
     print(f"Saved → {cv_plot_path}")
@@ -122,13 +122,13 @@ def evaluate_model(
     """Evaluate a trained model on the held-out test set.
 
     Computes AUROC, AUPRC, Accuracy, F1, and prints a confusion matrix.
-    Also saves a ROC curve plot to ``results_dir/roc_curve.png``.
+    Also saves a ROC curve plot to ``results_dir/step6_roc_curve.png``.
 
     Args:
         model: Trained XGBClassifier.
         X_test: Test feature matrix.
         y_test: Test label vector.
-        results_dir: Directory where ``roc_curve.png`` will be written.
+        results_dir: Directory where ``step6_roc_curve.png`` will be written.
 
     Returns:
         Dict with keys ``auroc``, ``auprc``, ``accuracy``, ``f1``.
@@ -157,7 +157,7 @@ def evaluate_model(
     ax.set_title("ROC Curve")
     ax.legend()
     plt.tight_layout()
-    roc_path = os.path.join(results_dir, "roc_curve.png")
+    roc_path = os.path.join(results_dir, "step6_roc_curve.png")
     plt.savefig(roc_path)
     plt.close()
     print(f"Saved → {roc_path}")

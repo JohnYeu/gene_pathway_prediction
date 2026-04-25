@@ -47,7 +47,7 @@ def global_shap_analysis(
     """Compute global SHAP importance and save a beeswarm summary plot.
 
     Uses TreeExplainer for speed. The resulting feature importance DataFrame
-    is also saved as ``global_importance.csv`` so that downstream steps
+    is also saved as ``step7_global_importance.csv`` so that downstream steps
     (e.g. step8) can load it without re-running SHAP.
 
     Args:
@@ -74,7 +74,7 @@ def global_shap_analysis(
         max_display=top_n, show=False,
     )
     plt.tight_layout()
-    summary_path = os.path.join(shap_dir, "global_summary.png")
+    summary_path = os.path.join(shap_dir, "step7_global_summary.png")
     plt.savefig(summary_path)
     plt.close()
     print(f"Saved → {summary_path}")
@@ -87,7 +87,7 @@ def global_shap_analysis(
     print(f"\nTop-{top_n} features by mean |SHAP|:")
     print(df.head(top_n).to_string(index=False))
 
-    csv_path = os.path.join(shap_dir, "global_importance.csv")
+    csv_path = os.path.join(shap_dir, "step7_global_importance.csv")
     df.to_csv(csv_path, index=False)
     print(f"Saved → {csv_path}")
 
@@ -101,11 +101,18 @@ def local_shap_analysis(
     all_go_terms: list[str],
     pathway_name: str = "",
     shap_dir: str = config.SHAP_DIR,
+    file_prefix: str = "step7",
 ) -> None:
     """Compute and visualise local SHAP explanation for a single sample.
 
     Saves a waterfall plot and prints the top 5 positive and negative
     contributing features.
+
+    The output filename pattern is ``{file_prefix}_local_{sample_id}.png``,
+    so the file itself records which pipeline step produced it.  The default
+    ``file_prefix="step7"`` matches step-7 standalone usage (training-sample
+    explanations); step 9 passes ``file_prefix="step9"`` when it generates
+    waterfalls for top-K scored candidates.
 
     Args:
         model: Trained XGBClassifier.
@@ -114,6 +121,7 @@ def local_shap_analysis(
         all_go_terms: Stable-sorted list of GO term identifiers.
         pathway_name: Optional display name shown in the plot title.
         shap_dir: Directory where the waterfall PNG will be written.
+        file_prefix: Step prefix to embed in the output filename.
     """
     X_sample = np.asarray(X_sample)
     if X_sample.ndim == 1:
@@ -139,7 +147,7 @@ def local_shap_analysis(
     shap.plots.waterfall(explanation[0], max_display=20, show=False)
     plt.title(title)
     plt.tight_layout()
-    plot_path = os.path.join(shap_dir, f"local_{sample_id}.png")
+    plot_path = os.path.join(shap_dir, f"{file_prefix}_local_{sample_id}.png")
     plt.savefig(plot_path)
     plt.close()
     print(f"Saved → {plot_path}")
