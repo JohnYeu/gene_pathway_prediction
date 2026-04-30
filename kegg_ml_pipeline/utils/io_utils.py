@@ -121,20 +121,32 @@ def load_pathways_tsv(path: str) -> dict[str, dict]:
     return pathways
 
 
-def save_gene_go_tsv(path: str, gene_go: dict[str, set[str]]) -> None:
+def save_gene_go_tsv(
+    path: str,
+    gene_go: dict[str, set[str]],
+    meta: dict | None = None,
+) -> None:
     """Write the gene -> GO mapping to a TSV file.
 
     Each row represents one gene. The `go_terms` column holds a sorted,
     comma-separated list of GO identifiers so the file is human-readable
     and diffs cleanly in version control.
 
-    Format: gene | go_count | go_terms
+    When `meta` is supplied, a single `# {json}` comment line is written
+    before the TSV header — used by step 3 to record the GO filter
+    parameters and source SHA256 so a stale cache can be detected.
+
+    Format:
+        # {"go_filter": {...}, "stats": {...}, "source_sha256": "..."}   (optional)
+        gene | go_count | go_terms
     """
     dir_name = os.path.dirname(path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
 
     with open(path, "w", encoding="utf-8", newline="") as handle:
+        if meta is not None:
+            handle.write(f"# {json.dumps(meta, sort_keys=True)}\n")
         writer = csv.writer(handle, delimiter="\t")
         writer.writerow(["gene", "go_count", "go_terms"])
 
@@ -145,14 +157,28 @@ def save_gene_go_tsv(path: str, gene_go: dict[str, set[str]]) -> None:
     print(f"Saved → {path}")
 
 
-def load_gene_go_tsv(path: str) -> dict[str, set[str]]:
-    """Load a gene -> GO mapping from a TSV created by `save_gene_go_tsv`.
+def _load_gene_go_tsv_internal(
+    path: str,
+) -> tuple[dict[str, set[str]], dict | None]:
+    """Shared loader: returns (gene_go, meta) where meta may be None.
 
-    Returns `{gene_id: set[go_term]}` with the same structure as the
-    in-memory representation used throughout the pipeline.
+    If the file's first line starts with `# `, it is parsed as JSON metadata
+    written by `save_gene_go_tsv(meta=...)`. Otherwise the file is read from
+    the start with no meta.
     """
     gene_go: dict[str, set[str]] = {}
+    meta: dict | None = None
+
     with open(path, "r", encoding="utf-8", newline="") as handle:
+        first = handle.readline()
+        if first.startswith("#"):
+            try:
+                meta = json.loads(first.lstrip("#").strip())
+            except json.JSONDecodeError:
+                meta = None
+        else:
+            handle.seek(0)
+
         reader = csv.DictReader(handle, delimiter="\t")
         for row in reader:
             gene = (row.get("gene") or "").strip()
@@ -161,4 +187,27 @@ def load_gene_go_tsv(path: str) -> dict[str, set[str]]:
             go_field = (row.get("go_terms") or "").strip()
             gene_go[gene] = {term for term in go_field.split(",") if term}
 
+    return gene_go, meta
+
+
+def load_gene_go_tsv(path: str) -> dict[str, set[str]]:
+    """Load a gene -> GO mapping from a TSV created by `save_gene_go_tsv`.
+
+    Returns `{gene_id: set[go_term]}` with the same structure as the
+    in-memory representation used throughout the pipeline. Any `# json`
+    metadata header is skipped automatically.
+    """
+    gene_go, _ = _load_gene_go_tsv_internal(path)
     return gene_go
+
+
+def load_gene_go_tsv_with_meta(
+    path: str,
+) -> tuple[dict[str, set[str]], dict | None]:
+    """Same as `load_gene_go_tsv` but also returns the metadata dict.
+
+    Returns `(gene_go, meta)`. `meta` is `None` when the file has no JSON
+    comment header (legacy cache or the file was written without a meta
+    argument). step 3 uses this to detect stale GO-filter parameters.
+    """
+    return _load_gene_go_tsv_internal(path)

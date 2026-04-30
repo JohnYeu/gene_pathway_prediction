@@ -141,8 +141,8 @@ _FIX_HINTS: dict[int, str] = {
     1: "Run: pip install -r requirements.txt  (Python >= 3.10 required)",
     2: "No internet?  Use: python run_pipeline.py --mock",
     3: (
-        "Missing GO annotation file.  Download ATH_GO_GOSLIM.txt from "
-        "https://www.arabidopsis.org/download/go  or use --mock"
+        "Missing GO annotation source.  Place either data/tair.gaf.gz or "
+        "data/ATH_GO_GOSLIM.txt under kegg_ml_pipeline/data/, or use --mock."
     ),
     4: "Re-run from step 2: python run_pipeline.py --from-step 2",
     5: "Re-run from step 3: python run_pipeline.py --from-step 3",
@@ -276,6 +276,33 @@ def _load_state(start_step: int, mock: bool) -> dict[str, Any]:
             )
             sys.exit(1)
 
+        # Provenance must also match between train and test. Two NPZs from
+        # different GO snapshots can have identical surviving vocabularies
+        # (the filter happens to keep the same term set on both sources), but
+        # the gene→GO mappings underneath the vector dimensions differ, so
+        # mixing them in step 6 evaluation is silently wrong.
+        def _read_provenance(npz):
+            sha = (str(npz["go_source_sha256"].item())
+                   if "go_source_sha256" in npz.files else "")
+            mg  = (int(npz["go_min_genes"].item())
+                   if "go_min_genes" in npz.files else -1)
+            mf  = (float(npz["go_max_fraction"].item())
+                   if "go_max_fraction" in npz.files else -1.0)
+            return sha, mg, mf
+
+        train_prov = _read_provenance(train_data)
+        test_prov  = _read_provenance(test_data)
+        if train_prov != test_prov:
+            print(
+                f"[ERROR] GO provenance mismatch between {train_path} "
+                f"(sha={train_prov[0][:12]}..., min_genes={train_prov[1]}, "
+                f"max_fraction={train_prov[2]}) and {test_path} "
+                f"(sha={test_prov[0][:12]}..., min_genes={test_prov[1]}, "
+                f"max_fraction={test_prov[2]}). "
+                "Re-run step 5 to regenerate both files from the same GO snapshot."
+            )
+            sys.exit(1)
+
         state["X_train"]      = train_data["X"]
         state["y_train"]      = train_data["y"]
         state["X_test"]       = test_data["X"]
@@ -292,6 +319,81 @@ def _load_state(start_step: int, mock: bool) -> dict[str, Any]:
             state["gene_go"]      = step3_go_annotation.load_go_annotation(
                 config.GO_ANNOTATION, mock=False
             )
+
+        # Vocab consistency check: gene_go (after the step-3 GO filter) must
+        # share the same vocabulary as train.npz's all_go_terms. A mismatch
+        # means the GO filter parameters changed since training, and any
+        # downstream feature extraction would silently use the wrong width.
+        if not mock:
+            cache_vocab = sorted(
+                {t for ts in state["gene_go"].values() for t in ts}
+            )
+            if cache_vocab != list(state["all_go_terms"]):
+                print(
+                    f"[ERROR] gene_go vocab ({len(cache_vocab)}) != "
+                    f"train.npz all_go_terms ({len(state['all_go_terms'])}). "
+                    "Re-run from step 3 — likely the GO filter parameters "
+                    "changed."
+                )
+                sys.exit(1)
+
+            # Provenance check: the all_go_terms vocab match above only
+            # catches changes that alter which terms survive the filter. A
+            # source update can rewire gene→GO mappings while leaving the
+            # retained term set intact (e.g. a gene gains/loses an annotation
+            # to a term that was already kept). Comparing the source SHA and
+            # the filter params catches that case so step 8/9 cannot quietly
+            # feed a new feature space into an old model.
+            saved_sha, saved_min, saved_max = train_prov
+            if not saved_sha or saved_min < 0 or saved_max < 0:
+                # Real-mode hard fail: a missing-provenance NPZ means we
+                # cannot prove train, test, model, and current GO source are
+                # all aligned, which is exactly the silent-inconsistency case
+                # the provenance fields were added to prevent.
+                print(
+                    f"[ERROR] {train_path} lacks GO provenance fields "
+                    "(produced by an older pipeline version). Cannot verify "
+                    "the trained model still matches the current GO source. "
+                    "Re-run from step 5: "
+                    "python run_pipeline.py --from-step 5"
+                )
+                sys.exit(1)
+
+            # current_go_source_sha256() prefers the raw ATH file but falls
+            # back to the cache meta header — needed for users who keep only
+            # data/step3_gene_go.tsv after deleting the ATH/GAF source.
+            current_sha = step3_go_annotation.current_go_source_sha256()
+            if not current_sha:
+                print(
+                    "[ERROR] Cannot determine current GO source SHA256: "
+                    f"neither {config.GO_ANNOTATION!r} nor "
+                    f"{config.GO_CACHE!r} is available. "
+                    "Re-run from step 3."
+                )
+                sys.exit(1)
+            if saved_sha != current_sha:
+                print(
+                    f"[ERROR] GO source SHA256 mismatch: train.npz="
+                    f"{saved_sha[:12]}... vs current="
+                    f"{current_sha[:12]}.... "
+                    "The GO annotation source changed since training; "
+                    "re-run from step 3."
+                )
+                sys.exit(1)
+            if saved_min != config.GO_MIN_GENES:
+                print(
+                    f"[ERROR] GO_MIN_GENES mismatch: train.npz="
+                    f"{saved_min} vs config={config.GO_MIN_GENES}. "
+                    "Re-run from step 3."
+                )
+                sys.exit(1)
+            if abs(saved_max - config.GO_MAX_GENE_FRACTION) > 1e-9:
+                print(
+                    f"[ERROR] GO_MAX_GENE_FRACTION mismatch: train.npz="
+                    f"{saved_max} vs config={config.GO_MAX_GENE_FRACTION}. "
+                    "Re-run from step 3."
+                )
+                sys.exit(1)
 
         # Steps 7-9 require the trained model.
         if start_step >= 7:
@@ -414,10 +516,40 @@ def _step5(state: dict, mock: bool) -> None:
     train_path   = config.MOCK_TRAIN_DATA if mock else config.TRAIN_DATA
     test_path    = config.MOCK_TEST_DATA  if mock else config.TEST_DATA
 
+    # Real-mode provenance: SHA of the GO source + the filter params that
+    # produced gene_go. Step 6+ resume compares these against current state to
+    # detect a model trained against a different GO snapshot. Mock mode skips
+    # provenance (sentinel values) since the data is regenerated each run.
+    #
+    # Resolved inside _run() so any failure (e.g. cache-only mode where neither
+    # ATH nor GAF is on disk and the cache meta is also missing) routes through
+    # _run_step's fix-hint UX instead of crashing before the step banner prints.
     def _run() -> tuple:
+        if mock:
+            sha = ""
+            min_genes = -1
+            max_fraction = -1.0
+        else:
+            # current_go_source_sha256() prefers GO_ANNOTATION but falls back
+            # to GO_CACHE meta — keeps step 5 runnable in cache-only mode,
+            # consistent with what load_go_annotation() already supports.
+            sha = step3_go_annotation.current_go_source_sha256()
+            if not sha:
+                raise RuntimeError(
+                    "Cannot determine GO source SHA256 for provenance: "
+                    f"neither {config.GO_ANNOTATION!r} nor {config.GO_CACHE!r} "
+                    "is available. Re-run from step 3."
+                )
+            min_genes = config.GO_MIN_GENES
+            max_fraction = config.GO_MAX_GENE_FRACTION
+
         X, y = step5_build_dataset.build_dataset(all_pathways, gene_go, all_go_terms)
         return step5_build_dataset.split_and_save(
-            X, y, all_go_terms, train_path=train_path, test_path=test_path,
+            X, y, all_go_terms,
+            train_path=train_path, test_path=test_path,
+            go_source_sha256=sha,
+            go_min_genes=min_genes,
+            go_max_fraction=max_fraction,
         )
 
     X_train, y_train, X_test, y_test = _run_step(5, "Build dataset", _run)

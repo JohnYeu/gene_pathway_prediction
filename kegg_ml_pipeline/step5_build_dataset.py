@@ -115,13 +115,23 @@ def split_and_save(
     random_state: int = config.RANDOM_STATE,
     train_path: str = config.TRAIN_DATA,
     test_path: str = config.TEST_DATA,
+    go_source_sha256: str = "",
+    go_min_genes: int = -1,
+    go_max_fraction: float = -1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Stratified train/test split and save to disk as NumPy archives.
 
-    Each output archive contains three arrays: ``X`` (feature matrix), ``y``
-    (labels), and ``all_go_terms`` (GO term names aligned to the first d-6
-    feature columns). Step 6 can load either file and immediately verify that
-    the feature space matches the one used during training.
+    Each output archive contains: ``X`` (feature matrix), ``y`` (labels),
+    ``all_go_terms`` (GO term names aligned to the first d-6 feature columns),
+    and three GO-provenance fields — ``go_source_sha256``, ``go_min_genes``,
+    ``go_max_fraction`` — that record the exact GO source file and filter
+    thresholds used to build the features. Step 6+ resume reads these to
+    detect a stale model trained against a different GO snapshot.
+
+    Defaults for the three provenance fields are sentinels (``""`` / ``-1``)
+    that mark the NPZ as "produced without provenance" — used by mock mode and
+    legacy callers. ``_load_state`` warns when it sees them rather than
+    erroring, so resume still works against older artefacts.
 
     Args:
         X: Feature matrix of shape ``(n, d)``.
@@ -131,6 +141,12 @@ def split_and_save(
         random_state: Seed passed to ``train_test_split``.
         train_path: Destination path for the training archive.
         test_path: Destination path for the test archive.
+        go_source_sha256: SHA256 hex digest of the GO annotation source file
+            used to build ``gene_go``. Empty string disables provenance.
+        go_min_genes: ``config.GO_MIN_GENES`` value used by the step-3 filter.
+            ``-1`` disables provenance.
+        go_max_fraction: ``config.GO_MAX_GENE_FRACTION`` value used by the
+            step-3 filter. ``-1.0`` disables provenance.
 
     Returns:
         Tuple ``(X_train, y_train, X_test, y_test)``.
@@ -156,17 +172,24 @@ def split_and_save(
     os.makedirs(os.path.dirname(train_path), exist_ok=True)
     os.makedirs(os.path.dirname(test_path), exist_ok=True)
 
+    provenance = {
+        "go_source_sha256": np.array(go_source_sha256),
+        "go_min_genes":     np.array(int(go_min_genes)),
+        "go_max_fraction":  np.array(float(go_max_fraction)),
+    }
     np.savez(
         train_path,
         X=X_train,
         y=y_train,
         all_go_terms=np.array(all_go_terms),
+        **provenance,
     )
     np.savez(
         test_path,
         X=X_test,
         y=y_test,
         all_go_terms=np.array(all_go_terms),
+        **provenance,
     )
 
     print(
@@ -199,4 +222,17 @@ if __name__ == "__main__":
                        train_path=config.MOCK_TRAIN_DATA,
                        test_path=config.MOCK_TEST_DATA)
     else:
-        split_and_save(X, y, all_go_terms)
+        from step3_go_annotation import current_go_source_sha256
+        sha = current_go_source_sha256()
+        if not sha:
+            raise SystemExit(
+                "step5: cannot determine GO source SHA256 for provenance — "
+                f"neither {config.GO_ANNOTATION!r} nor {config.GO_CACHE!r} "
+                "is available. Re-run from step 3."
+            )
+        split_and_save(
+            X, y, all_go_terms,
+            go_source_sha256=sha,
+            go_min_genes=config.GO_MIN_GENES,
+            go_max_fraction=config.GO_MAX_GENE_FRACTION,
+        )

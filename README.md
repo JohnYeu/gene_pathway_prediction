@@ -21,9 +21,10 @@ Python ≥ 3.10 is required.
 |------|--------|-----------|
 | KEGG *Arabidopsis thaliana* pathways | Fetched automatically by step 2 (internet required) | No (use `--mock` for offline testing) |
 | AraCyc pathway file | Included in `data/aracyc_pathways.20251021` | Yes (already in repo) |
-| TAIR GO annotation (`ATH_GO_GOSLIM.txt`) | Download from https://www.arabidopsis.org/download/go | Yes for real runs |
+| TAIR GO annotation (`ATH_GO_GOSLIM.txt`) | Download from https://www.arabidopsis.org/download/go | Yes (or supply `tair.gaf.gz`) |
+| TAIR GAF archive (`tair.gaf.gz`) | Download from https://current.geneontology.org/products/pages/downloads.html | Optional — used to derive `ATH_GO_GOSLIM.txt` automatically when it is missing |
 
-Place `ATH_GO_GOSLIM.txt` in `kegg_ml_pipeline/data/` before running the real pipeline.
+Place either `ATH_GO_GOSLIM.txt` **or** `tair.gaf.gz` in `kegg_ml_pipeline/data/` before running the real pipeline. When only the GAF archive is present, step 3 will derive a project-compatible 9-column `ATH_GO_GOSLIM.txt` from it on first run (one-shot; not regenerated on subsequent runs because file mtimes after `unzip` / `git checkout` / `cp` are unrelated to the database release date).
 
 ---
 
@@ -58,7 +59,7 @@ python run_pipeline.py --deg my_degs.txt
 |------|--------|-------|--------|
 | 1 | `step1_setup.py` | — | (environment check; no files) |
 | 2 | `step2a_kegg.py` + `step2b_aracyc.py` | KEGG REST API, `data/aracyc_pathways.20251021` | `data/step2_kegg_pathways.tsv`, `data/step2_aracyc_pathways.tsv`, `data/step2_all_pathways.tsv` |
-| 3 | `step3_go_annotation.py` | `data/ATH_GO_GOSLIM.txt` | `data/step3_gene_go.tsv` |
+| 3 | `step3_go_annotation.py` | `data/ATH_GO_GOSLIM.txt` (or `data/tair.gaf.gz` to derive it) | `data/step3_gene_go.tsv` (with GO filter parameters in JSON header) |
 | 4 | `step4_feature_extraction.py` | Pathway gene sets, gene→GO map | `data/step4_feature_matrix.npz` (full per-pathway feature matrix + aligned `pathway_ids`) |
 | 5 | `step5_build_dataset.py` | Pathways, gene→GO map | `data/step5_train.npz`, `data/step5_test.npz` |
 | 6 | `step6_train_xgboost.py` | Train/test NPZ | `results/step6_pathway_model.json`, `results/step6_cv_scores.png`, `results/step6_roc_curve.png` |
@@ -162,7 +163,25 @@ Key constants in `config.py`:
 | `JACCARD_THRESHOLD` | 0.5 | Threshold for `high_overlap` / `low_overlap` |
 | `AUROC_THRESHOLD` | 0.85 | Minimum CV AUROC for a passing model |
 | `NEG_POS_RATIO` | 2 | Negative-to-positive sampling ratio |
+| `GO_MIN_GENES` | 20 | Lower bound (inclusive) on the number of genes a GO term must annotate to be retained |
+| `GO_MAX_GENE_FRACTION` | 0.30 | Upper bound on the fraction of annotated genes a GO term may cover |
 | `XGB_PARAMS` | see file | XGBoost hyperparameters |
+
+---
+
+## GO term frequency filter
+
+After parsing TAIR GO annotations, step 3 applies a dual-frequency filter: GO terms annotated to fewer than `GO_MIN_GENES` (default 20) genes are dropped as statistically underpowered, and terms covering more than `GO_MAX_GENE_FRACTION` (default 0.30) of annotated genes are dropped as non-discriminative. Genes whose annotations are entirely removed by this filter are excluded from the filtered GO background. Each pathway gene set is therefore represented by `len(filtered_GO_terms) + 6` features: the GO-frequency vector, four pairwise GO Jaccard statistics, and two gene-set size / annotation-density features.
+
+The filtered cache (`data/step3_gene_go.tsv`) records the filter parameters and source SHA256 in a JSON header line. Source files (`tair.gaf.gz` or `ATH_GO_GOSLIM.txt`) always take precedence over the cache, so changing the filter parameters and re-running step 3 always re-applies the filter rather than silently reusing a stale cache.
+
+A sensitivity sweep over `min_genes ∈ {5, 10, 15, 20}` × `max_fraction ∈ {0.20, 0.30, 0.50}` is available via:
+
+```bash
+python kegg_ml_pipeline/analysis/go_filter_sensitivity.py
+```
+
+This writes `results/supp_go_filter_sweep/sweep.csv` (12 rows, one per grid cell) and a `readme.txt`. The script is independent of `step6_train_xgboost.train_with_cv` and does not overwrite official step-6 outputs.
 
 ---
 

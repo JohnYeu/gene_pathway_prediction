@@ -156,10 +156,15 @@ def go_enrichment_validation(
 ) -> pd.DataFrame:
     """Run a hypergeometric GO enrichment test on a candidate gene set.
 
-    The background universe is all genes present in ``gene_go``. Only GO terms
-    in ``all_go_terms`` (the training feature space) are tested, and Bonferroni
-    correction uses ``len(all_go_terms)`` as the number of hypotheses — keeping
-    the correction denominator consistent with the model's feature space.
+    The background universe is all genes present in ``gene_go``. After the
+    step-3 dual-frequency GO term filter, ``gene_go`` only contains genes
+    that retain at least one GO annotation in the filtered vocabulary
+    (≈26,457 with the current TAIR release). Genes whose entire GO set
+    was filtered out are excluded from both ``M`` and ``n``, keeping the
+    hypergeometric math consistent with the feature space used during
+    training. Only GO terms in ``all_go_terms`` (≈799 after filtering)
+    are tested, and Bonferroni correction uses ``len(all_go_terms)`` as
+    the number of hypotheses.
 
     Args:
         candidate_genes: List of gene IDs in the candidate set.

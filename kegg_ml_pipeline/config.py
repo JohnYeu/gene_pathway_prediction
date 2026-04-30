@@ -20,11 +20,23 @@ ARACYC_RAW = "data/aracyc_pathways.20251021"
 ALL_PATHWAYS = "data/step2_all_pathways.tsv"
 
 # ── Step 3: GO annotation parsing ───────────────────────────────────────────
+# Optional upstream GAF source. When ATH_GO_GOSLIM.txt is missing but this file
+# exists, step 3 derives ATH_GO_GOSLIM.txt from it. mtime is intentionally NOT
+# used to decide regeneration (unzip / git checkout / cp all reset mtime).
+GO_GAF = "data/tair.gaf.gz"
+
 # TAIR GO annotation source file (INPUT — not renamed).
 GO_ANNOTATION = "data/ATH_GO_GOSLIM.txt"
 
 # Serialized gene -> GO mapping cache (TSV export from step 3).
 GO_CACHE = "data/step3_gene_go.tsv"
+
+# Dual-frequency GO term filter (real mode only — mock pipeline bypasses).
+# Drops terms annotated to fewer than GO_MIN_GENES genes (statistical noise)
+# and terms covering more than GO_MAX_GENE_FRACTION of annotated genes
+# (non-discriminative). Applied in step 3 right after parsing.
+GO_MIN_GENES         = 20
+GO_MAX_GENE_FRACTION = 0.30
 
 # ── Step 4: feature extraction ──────────────────────────────────────────────
 FEATURE_MATRIX      = "data/step4_feature_matrix.npz"
